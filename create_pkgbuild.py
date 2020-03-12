@@ -8,6 +8,8 @@ import sys
 import os
 import os.path
 import urllib3
+import requests
+from requests.exceptions import HTTPError
 import yaml
 import re
 from collections import OrderedDict
@@ -28,19 +30,19 @@ updated_packages_filename = os.path.join(updates_packages_dir,
 makepkg_filename = os.path.join(updates_packages_dir,
                                 "makepkg_%(distro)s.dump")
 
-http = urllib3.PoolManager()
+#http = urllib3.PoolManager()
 
-try:
-    import certifi
-
-    # Make verified HTTPS requests
-    http = urllib3.PoolManager(
-        cert_reqs='CERT_REQUIRED',  # Force certificate check.
-        ca_certs=certifi.where(),  # Path to the Certifi bundle.
-    )
-except ImportError as e:
-    # HTTPS requests will not be verified
-    pass
+#try:
+#    import certifi
+#
+#    # Make verified HTTPS requests
+#    http = urllib3.PoolManager(
+#        cert_reqs='CERT_REQUIRED',  # Force certificate check.
+#        ca_certs=certifi.where(),  # Path to the Certifi bundle.
+#    )
+#except ImportError as e:
+#    # HTTPS requests will not be verified
+#    pass
 
 
 class PackageBase(object):
@@ -110,7 +112,19 @@ class PackageBase(object):
     Arguments:
     - `url`: Valid URL pointing to a package.xml file.
     """
-        return catkin_pkg.package.parse_package_string(http.request('GET', url).data)
+        #return catkin_pkg.package.parse_package_string(http.request('GET', url).data)
+        try:
+            response = requests.get(url)
+            # If the response was successful, no Exception will be raised
+            response.raise_for_status()
+        except HTTPError as http_err:
+            print(f'HTTP error occurred: {http_err}')  # Python 3.6
+        except Exception as err:
+            print(f'Other error occurred: {err}')  # Python 3.6
+        else:
+            print(url + 'Success!')
+        response.close()
+        return catkin_pkg.package.parse_package_string(response.text)
 
     def _fix_dependencies(self, rosdep_urls, build_dep, run_dep):
         # Fix usual non-ROS dependencies:
@@ -191,8 +205,20 @@ class PackageBase(object):
     def _get_rosdep_dictionary(self, rosdep_urls):
         dependency_map = {}
         for rosdep_url in rosdep_urls:
-            stream = http.request('GET', rosdep_url).data
-            rosdep_file = yaml.load(stream, Loader=yaml.BaseLoader)
+            #stream = http.request('GET', rosdep_url).data
+            #rosdep_file = yaml.load(stream, Loader=yaml.BaseLoader)
+            try:
+                response = requests.get(rosdep_url, stream=True)
+                # If the response was successful, no Exception will be raised
+                response.raise_for_status()
+            except HTTPError as http_err:
+                print(f'HTTP error occurred: {http_err}')  # Python 3.6
+            except Exception as err:
+                print(f'Other error occurred: {err}')  # Python 3.6
+            else:
+                print(rosdep_url + ' Success!')    
+            rosdep_file = yaml.load(response.text, Loader=yaml.BaseLoader)
+            response.close()
             for package_name, distrib in rosdep_file.items():
                 if 'arch' in distrib:
                     if 'pacman' in distrib["arch"]:
@@ -209,10 +235,26 @@ class PackageBase(object):
     clashes.
     """
         tarball_path = "%s/%s-%s" % (path, name, url.split('/')[-1])
+        #if not os.path.exists(tarball_path):
+        #    with http.request('GET', url, preload_content=False) \
+        #            as r, open(tarball_path, 'wb') as out_file:
+        #        shutil.copyfileobj(r, out_file)
         if not os.path.exists(tarball_path):
-            with http.request('GET', url, preload_content=False) \
-                    as r, open(tarball_path, 'wb') as out_file:
-                shutil.copyfileobj(r, out_file)
+            try:
+                with requests.get(url, stream=True) as r:
+                    r.raise_for_status()
+                    with open(tarball_path, 'wb') as out_file:
+                        for chunk in r.iter_content(chunk_size=8192): 
+                            if chunk: # filter out keep-alive new chunks
+                                out_file.write(chunk)
+                                out_file.flush()
+                    r.close()        
+            except HTTPError as http_err:
+                print(f'HTTP error occurred: {http_err}')  # Python 3.6
+            except Exception as err:
+                print(f'Other error occurred: {err}')  # Python 3.6
+            else:
+                print(url + 'Success!')
         return hashlib.sha256(open(tarball_path, 'rb').read()).hexdigest()
 
     def generate(self, exclude_dependencies=[], rosdep_urls=[], output_dir=None):
@@ -255,7 +297,9 @@ class Package(PackageBase):
     ros_depends=(%(ros_run_dependencies)s)
     depends=(${ros_depends[@]}
     %(other_run_dependencies)s)
-
+    _dir=%(tarball_dir)s
+    source=(""${pkgname}-${pkgver}.tar.gz""::""%(tarball_url)s"")
+    sha256sums=('%(tarball_sha)s')
     build() {
         # Use ROS environment variables
         source /usr/share/ros-build-tools/clear-ros-env.sh
@@ -315,7 +359,7 @@ class Package(PackageBase):
         if python_version_major == "3":
             # If Python 3.4: PySideConfig{.cpython-34m}.cmake
             python_basename = ".cpython-%s" % (python_version_full.replace(".", ""))
-
+        
         pkgbuild = self.BUILD_TEMPLATE % {
             'distro': self.distro.name,
             'arch_package_name': self._rosify_package_name(self.name),
@@ -329,7 +373,7 @@ class Package(PackageBase):
             'tarball_url': "%s/archive/release/%s/%s/${pkgver}.tar.gz"
                            % (self.repository_url.replace('.git', ''),
                               self.distro.name, self.name),
-            'tarball_dir': "%s-release-%s-%s-${pkgver}"
+            'tarball_dir': "%s-release-%s-%s"                  #'tarball_dir': "%s-release-%s-%s-${pkgver}"
                            % (self.repository_name, self.distro.name, self.name),
             'tarball_sha': self._download_tarball(self.tarball_url, output_dir,
                                                   "ros-%s-%s" % (self.distro.name,
@@ -380,7 +424,8 @@ class MetaPackage(PackageBase):
     def __init__(self, distro, repository_url, name, version):
         try:
             super(MetaPackage, self).__init__(distro, repository_url, name, version)
-        except urllib3.exceptions.HTTPError:
+        #except urllib3.exceptions.HTTPError:
+        except HTTPError:
             # Virtual metapackage
             # TODO: there should be a cleaner way to deal with this...
             self.name = name
@@ -425,7 +470,19 @@ class MetaPackage(PackageBase):
 class DistroDescription(object):
 
     def __init__(self, name, url, python_version):
-        stream = http.request('GET', url).data
+        stream = "" #stream = http.request('GET', url).data
+        try:
+            response = requests.get(url)
+            # If the response was successful, no Exception will be raised
+            response.raise_for_status()
+            stream = response.text 
+            response.close()
+        except HTTPError as http_err:
+            print(f'HTTP error occurred: {http_err}')  # Python 3.6
+        except Exception as err:
+            print(f'Other error occurred: {err}')  # Python 3.6
+        else:
+            print(url + 'Success!')          
         self.name = name
         self._distro = yaml.load(stream, Loader=yaml.BaseLoader)
         self._package_cache = {}
@@ -708,12 +765,12 @@ def main():
 
     # Dictionary containing valid Python versions
     valid_python_versions = {"kinetic": ["2.7", "3.7"],
-                             "melodic": ["2.7", "3.7"]}
+                             "melodic": ["2.7", "3.7" , "3.8"]}
 
     # Default Python version that will be used
     # Even though the official python version for melodic is stil 2.7, the official one for Arch is 3.
     default_python_version = {"kinetic": "2.7",
-                              "melodic": "3.7"}
+                              "melodic": "3.8"}
 
     python_version = default_python_version[args.distro]
     if args.python_version != "":
