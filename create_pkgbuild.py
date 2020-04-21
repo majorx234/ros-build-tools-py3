@@ -353,7 +353,7 @@ make DESTDIR="${pkgdir}/" install
             'tarball_url': "%s/archive/release/%s/%s/${pkgver}.tar.gz"
                            % (self.repository_url.replace('.git', ''),
                               self.distro.name, self.name),
-            'tarball_dir': "%s-release-%s-%s"#'tarball_dir': "%s-release-%s-%s-${pkgver}"
+            'tarball_dir': "%s-release-%s-%s"
                            % (self.repository_name, self.distro.name, self.name),
             'tarball_sha': self._download_tarball(self.tarball_url, output_dir,
                                                   "ros-%s-%s" % (self.distro.name,
