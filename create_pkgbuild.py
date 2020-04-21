@@ -30,21 +30,6 @@ updated_packages_filename = os.path.join(updates_packages_dir,
 makepkg_filename = os.path.join(updates_packages_dir,
                                 "makepkg_%(distro)s.dump")
 
-#http = urllib3.PoolManager()
-
-#try:
-#    import certifi
-#
-#    # Make verified HTTPS requests
-#    http = urllib3.PoolManager(
-#        cert_reqs='CERT_REQUIRED',  # Force certificate check.
-#        ca_certs=certifi.where(),  # Path to the Certifi bundle.
-#    )
-#except ImportError as e:
-#    # HTTPS requests will not be verified
-#    pass
-
-
 class PackageBase(object):
 
     def __init__(self, distro, repository_url, name, version):
@@ -112,7 +97,6 @@ class PackageBase(object):
     Arguments:
     - `url`: Valid URL pointing to a package.xml file.
     """
-        #return catkin_pkg.package.parse_package_string(http.request('GET', url).data)
         try:
             response = requests.get(url)
             # If the response was successful, no Exception will be raised
@@ -205,8 +189,6 @@ class PackageBase(object):
     def _get_rosdep_dictionary(self, rosdep_urls):
         dependency_map = {}
         for rosdep_url in rosdep_urls:
-            #stream = http.request('GET', rosdep_url).data
-            #rosdep_file = yaml.load(stream, Loader=yaml.BaseLoader)
             try:
                 response = requests.get(rosdep_url, stream=True)
                 # If the response was successful, no Exception will be raised
@@ -235,10 +217,6 @@ class PackageBase(object):
     clashes.
     """
         tarball_path = "%s/%s-%s" % (path, name, url.split('/')[-1])
-        #if not os.path.exists(tarball_path):
-        #    with http.request('GET', url, preload_content=False) \
-        #            as r, open(tarball_path, 'wb') as out_file:
-        #        shutil.copyfileobj(r, out_file)
         if not os.path.exists(tarball_path):
             try:
                 with requests.get(url, stream=True) as r:
@@ -361,7 +339,7 @@ make DESTDIR="${pkgdir}/" install
         if python_version_major == "3":
             # If Python 3.4: PySideConfig{.cpython-34m}.cmake
             python_basename = ".cpython-%s" % (python_version_full.replace(".", ""))
-        
+
         pkgbuild = self.BUILD_TEMPLATE % {
             'distro': self.distro.name,
             'arch_package_name': self._rosify_package_name(self.name),
@@ -375,7 +353,7 @@ make DESTDIR="${pkgdir}/" install
             'tarball_url': "%s/archive/release/%s/%s/${pkgver}.tar.gz"
                            % (self.repository_url.replace('.git', ''),
                               self.distro.name, self.name),
-            'tarball_dir': "%s-release-%s-%s"                  #'tarball_dir': "%s-release-%s-%s-${pkgver}"
+            'tarball_dir': "%s-release-%s-%s"#'tarball_dir': "%s-release-%s-%s-${pkgver}"
                            % (self.repository_name, self.distro.name, self.name),
             'tarball_sha': self._download_tarball(self.tarball_url, output_dir,
                                                   "ros-%s-%s" % (self.distro.name,
@@ -426,7 +404,6 @@ class MetaPackage(PackageBase):
     def __init__(self, distro, repository_url, name, version):
         try:
             super(MetaPackage, self).__init__(distro, repository_url, name, version)
-        #except urllib3.exceptions.HTTPError:
         except HTTPError:
             # Virtual metapackage
             # TODO: there should be a cleaner way to deal with this...
